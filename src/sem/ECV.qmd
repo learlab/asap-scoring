@@ -1,3 +1,23 @@
+---
+title: "Extrinsic Convergent Validity"
+subtitle: "Initial test of exchangeability between three scores"
+format: html
+editor: visual
+execute: 
+  echo: true
+--- 
+
+# Notes for Scott
+
+ - I suggest SemPlot for path diagrams
+ - No need to report Model 2 (unconstrained model) -- just look at results for the constrained model
+ - Throw this (three-way) analysis in the garbage and do pairwise comparisons:
+    - Human Score vs ModernBERT
+    - Human Score vs GPT
+ - Try and get R^2 from SEM models maybe?
+ - Langdon will re-read Jingle/Jangle paper
+ - Talk to Kris if we have any questions
+
 ```{r}
 library(lavaan)
 library(tidyverse)
@@ -24,7 +44,15 @@ full_data <- pca %>%
   left_join(gpt_4o, by = "essay_id") %>%
   left_join(modernbert, by = "essay_id") %>%
   # Remove any rows with missing data
-  na.omit()
+  na.omit() %>%
+  # Mean-center the existing variables
+  mutate(
+    # Center the scoring variables
+    score_c = if("score" %in% names(.)) scale(score, center = TRUE, scale = FALSE)[,1] else NULL,
+    predicted_4o_c = if("predicted_4o" %in% names(.)) scale(predicted_4o, center = TRUE, scale = FALSE)[,1] else NULL,
+    predicted_modernbert_c = if("predicted_modernbert" %in% names(.)) scale(predicted_modernbert, center = TRUE, scale = FALSE)[,1] else NULL,
+  )
+
 ```
 
 # Model 1: Constrained model (Equal factor loadings across all three scoring methods)
@@ -34,19 +62,19 @@ This tests the ECV hypothesis - if true, all three scores should relate similarl
 ```{r}
 model_1_constrained <- "
   # Constrained correlations - each component has the same correlation with all three scores
-  score ~ c1*lexical_soph + c2*para_overlap + c3*academic + c4*TTR + c5*overlap_sentences + c6*phrasal + c7*syntax
-  predicted_4o ~ c1*lexical_soph + c2*para_overlap + c3*academic + c4*TTR + c5*overlap_sentences + c6*phrasal + c7*syntax
-  predicted_modernbert ~ c1*lexical_soph + c2*para_overlap + c3*academic + c4*TTR + c5*overlap_sentences + c6*phrasal + c7*syntax
+  score_c ~                c1*lexical_soph + c2*para_overlap + c3*academic + c4*TTR + c5*overlap_sentences + c6*phrasal + c7*syntax
+  predicted_4o_c ~         c1*lexical_soph + c2*para_overlap + c3*academic + c4*TTR + c5*overlap_sentences + c6*phrasal + c7*syntax
+  predicted_modernbert_c ~ c1*lexical_soph + c2*para_overlap + c3*academic + c4*TTR + c5*overlap_sentences + c6*phrasal + c7*syntax
   
   # Allow the three scores to correlate
-  score ~~ predicted_4o
-  score ~~ predicted_modernbert
-  predicted_4o ~~ predicted_modernbert
+  score_c ~~ predicted_4o_c
+  score_c ~~ predicted_modernbert_c
+  predicted_4o_c ~~ predicted_modernbert_c
 
-  # Constrain error variances to be equal (helps with identification for the unconstrained model below)
-  score ~~ e1*score
-  predicted_4o ~~ e1*predicted_4o
-  predicted_modernbert ~~ e1*predicted_modernbert
+  # Fix intercepts to zero for identification
+  # score_c ~ 0*1
+  # predicted_4o_c ~ 0*1
+  # predicted_modernbert_c ~ 0*1
 "
 ```
   
@@ -55,19 +83,19 @@ model_1_constrained <- "
 ```{r}
 model_2_unconstrained <- "
   # Unconstrained correlations - each score can have different relationships with components
-  score ~ lexical_soph + para_overlap + academic + TTR + overlap_sentences + phrasal + syntax
-  predicted_4o ~ lexical_soph + para_overlap + academic + TTR + overlap_sentences + phrasal + syntax
-  predicted_modernbert ~ lexical_soph + para_overlap + academic + TTR + overlap_sentences + phrasal + syntax
+  score_c ~                lexical_soph + para_overlap + academic + TTR + overlap_sentences + phrasal + syntax
+  predicted_4o_c ~         lexical_soph + para_overlap + academic + TTR + overlap_sentences + phrasal + syntax
+  predicted_modernbert_c ~ lexical_soph + para_overlap + academic + TTR + overlap_sentences + phrasal + syntax
   
   # Allow the three scores to correlate
-  score ~~ predicted_4o
-  score ~~ predicted_modernbert
-  predicted_4o ~~ predicted_modernbert
+  score_c ~~ predicted_4o_c
+  score_c ~~ predicted_modernbert_c
+  predicted_4o_c ~~ predicted_modernbert_c
 
-  # Constrain error variances to be equal (helps with identification)
-  score ~~ e1*score
-  predicted_4o ~~ e1*predicted_4o
-  predicted_modernbert ~~ e1*predicted_modernbert
+  # Fix intercepts to zero for identification
+  # score_c ~ 0*1
+  # predicted_4o_c ~ 0*1
+  # predicted_modernbert_c ~ 0*1
 "
 ```
 
