@@ -1,0 +1,139 @@
+```{r}
+library(lavaan)
+library(tidyverse)
+```
+
+# Load and prepare data
+
+```{r}
+pca <- read_csv("../../data/pca_scores_test_set_asap_IN.csv") %>% 
+  select(-1) %>%
+  select(essay_id, score, everything())
+
+gpt_4o <- read_csv("../../data/asap_w_4o_mini_scores_test.csv") %>% 
+  rename(predicted_4o = "4o_finetuned_score") %>% 
+  select(-score)
+
+modernbert <- read_csv("../../data/hyper_parameterized_test_results_asap_subset_in_modernbert.csv") %>% 
+  rename(predicted_modernbert = "predicted") %>% 
+  select(-"TRUE")
+
+
+# Combine all dataframes
+full_data <- pca %>%
+  left_join(gpt_4o, by = "essay_id") %>%
+  left_join(modernbert, by = "essay_id") %>%
+  # Remove any rows with missing data
+  na.omit()
+```
+
+# Model 1: Constrained model (Equal factor loadings across all three scoring methods)
+
+This tests the ECV hypothesis - if true, all three scores should relate similarly to the linguistic components
+
+```{r}
+model_1_constrained <- "
+  # Constrained correlations - each component has the same correlation with all three scores
+  score ~ c1*lexical_soph + c2*para_overlap + c3*academic + c4*TTR + c5*overlap_sentences + c6*phrasal + c7*syntax
+  predicted_4o ~ c1*lexical_soph + c2*para_overlap + c3*academic + c4*TTR + c5*overlap_sentences + c6*phrasal + c7*syntax
+  predicted_modernbert ~ c1*lexical_soph + c2*para_overlap + c3*academic + c4*TTR + c5*overlap_sentences + c6*phrasal + c7*syntax
+  
+  # Allow the three scores to correlate
+  score ~~ predicted_4o
+  score ~~ predicted_modernbert
+  predicted_4o ~~ predicted_modernbert
+
+  # Constrain error variances to be equal (helps with identification for the unconstrained model below)
+  score ~~ e1*score
+  predicted_4o ~~ e1*predicted_4o
+  predicted_modernbert ~~ e1*predicted_modernbert
+"
+```
+  
+# Model 2: Unconstrained model (Factor loadings allowed to vary)
+
+```{r}
+model_2_unconstrained <- "
+  # Unconstrained correlations - each score can have different relationships with components
+  score ~ lexical_soph + para_overlap + academic + TTR + overlap_sentences + phrasal + syntax
+  predicted_4o ~ lexical_soph + para_overlap + academic + TTR + overlap_sentences + phrasal + syntax
+  predicted_modernbert ~ lexical_soph + para_overlap + academic + TTR + overlap_sentences + phrasal + syntax
+  
+  # Allow the three scores to correlate
+  score ~~ predicted_4o
+  score ~~ predicted_modernbert
+  predicted_4o ~~ predicted_modernbert
+
+  # Constrain error variances to be equal (helps with identification)
+  score ~~ e1*score
+  predicted_4o ~~ e1*predicted_4o
+  predicted_modernbert ~~ e1*predicted_modernbert
+"
+```
+
+# Fit both models
+
+```{r}
+fit_constrained <- sem(model_1_constrained, data = full_data, std.lv = TRUE)
+fit_unconstrained <- sem(model_2_unconstrained, data = full_data, std.lv = TRUE)
+```
+
+# Compare models using chi-square difference test
+
+```{r}
+model_comparison <- anova(fit_constrained, fit_unconstrained)
+
+# Display results
+cat("=== MODEL COMPARISON RESULTS ===\n")
+print(model_comparison)
+
+cat("\n=== CONSTRAINED MODEL FIT (Model 1) ===\n")
+cat("This model assumes equal relationships between components and all scoring methods\n")
+summary(fit_constrained, fit.measures = TRUE, standardized = TRUE)
+
+cat("\n=== UNCONSTRAINED MODEL FIT (Model 2) ===\n") 
+cat("This model allows different relationships between components and scoring methods\n")
+summary(fit_unconstrained, fit.measures = TRUE, standardized = TRUE)
+```
+
+
+# Additional fit statistics for interpretation
+
+```{r}
+constrained_fit <- fitMeasures(fit_constrained, c("chisq", "df", "pvalue", "cfi", "tli", "rmsea", "srmr"))
+unconstrained_fit <- fitMeasures(fit_unconstrained, c("chisq", "df", "pvalue", "cfi", "tli", "rmsea", "srmr"))
+
+fit_comparison_df <- data.frame(
+  Model = c("Constrained (Equal loadings)", "Unconstrained (Free loadings)"),
+  Chi_square = c(constrained_fit["chisq"], unconstrained_fit["chisq"]),
+  DF = c(constrained_fit["df"], unconstrained_fit["df"]),
+  P_value = c(constrained_fit["pvalue"], unconstrained_fit["pvalue"]),
+  CFI = c(constrained_fit["cfi"], unconstrained_fit["cfi"]),
+  TLI = c(constrained_fit["tli"], unconstrained_fit["tli"]),
+  RMSEA = c(constrained_fit["rmsea"], unconstrained_fit["rmsea"]),
+  SRMR = c(constrained_fit["srmr"], unconstrained_fit["srmr"])
+)
+
+# Round only the numeric columns
+fit_comparison_df[, -1] <- round(fit_comparison_df[, -1], 3)
+print(fit_comparison_df)
+```
+
+
+# Optional: Extract and compare specific parameter estimates if unconstrained model is better
+
+```{r}
+if(model_comparison$`Pr(>Chisq)`[2] < 0.05) {
+  cat("\n=== PARAMETER DIFFERENCES (since unconstrained model is better) ===\n")
+  params_constrained <- parameterEstimates(fit_constrained, standardized = TRUE)
+  params_unconstrained <- parameterEstimates(fit_unconstrained, standardized = TRUE)
+  # Focus on the regression coefficients
+  regressions_unconstrained <- params_unconstrained %>% 
+    filter(op == "~") %>%
+    select(lhs, rhs, est, std.all) %>%
+    arrange(rhs, lhs)
+  
+  print(regressions_unconstrained)
+}
+```
+  
